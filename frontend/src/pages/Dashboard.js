@@ -3,7 +3,7 @@ import { useAuth } from "@/App";
 import { useNavigate } from "react-router-dom";
 import {
   LayoutDashboard, FileText, Map, MessageSquare, Trophy, Users, Star,
-  ClipboardList, Upload, Bell, LogOut, Menu, X, ChevronRight, Shield
+  ClipboardList, Upload, Bell, LogOut, Menu, X, ChevronRight, Shield, Zap, BarChart3
 } from "lucide-react";
 
 import ScorecardForm from "@/components/golf/ScorecardForm";
@@ -19,6 +19,8 @@ import CoachEvalForm from "@/components/golf/CoachEvalForm";
 import VPCFlows from "@/components/golf/VPCFlows";
 import ClassFeed from "@/components/golf/ClassFeed";
 import DashboardHome from "@/components/golf/DashboardHome";
+import LiveLeaderboard from "@/components/golf/LiveLeaderboard";
+import LiveScoring from "@/components/golf/LiveScoring";
 
 export default function Dashboard() {
   const { user, logout } = useAuth();
@@ -34,14 +36,17 @@ export default function Dashboard() {
     STUDENT: [
       { id: "home", label: "Dashboard", icon: LayoutDashboard },
       { id: "scorecard", label: "New Scorecard", icon: FileText },
+      { id: "leaderboard", label: "Live Leaderboard", icon: Trophy },
+      { id: "tournaments", label: "Tournaments", icon: BarChart3 },
       { id: "map", label: "Course Map", icon: Map },
-      { id: "tournaments", label: "Tournaments", icon: Trophy },
       { id: "chat", label: "Team Chat", icon: MessageSquare },
       { id: "eval-coach", label: "Rate Coach", icon: Star },
       { id: "feed", label: "Broadcasts", icon: Bell },
     ],
     COACH: [
       { id: "home", label: "Dashboard", icon: LayoutDashboard },
+      { id: "live-scoring", label: "Live Scoring", icon: Zap },
+      { id: "leaderboard", label: "Leaderboard", icon: Trophy },
       { id: "roster", label: "Student Roster", icon: Users },
       { id: "evaluation", label: "Evaluate Student", icon: ClipboardList },
       { id: "attendance", label: "Attendance", icon: ClipboardList },
@@ -51,6 +56,7 @@ export default function Dashboard() {
     ],
     PARENT: [
       { id: "home", label: "Dashboard", icon: LayoutDashboard },
+      { id: "leaderboard", label: "Live Leaderboard", icon: Trophy },
       { id: "vpc", label: "Consent Requests", icon: Shield },
       { id: "chat", label: "Monitor Chat", icon: MessageSquare },
       { id: "eval-coach", label: "Rate Coach", icon: Star },
@@ -58,6 +64,8 @@ export default function Dashboard() {
     ],
     ADMIN: [
       { id: "home", label: "Dashboard", icon: LayoutDashboard },
+      { id: "live-scoring", label: "Live Scoring", icon: Zap },
+      { id: "leaderboard", label: "Leaderboard", icon: Trophy },
       { id: "admin", label: "Administration", icon: Upload },
       { id: "roster", label: "All Students", icon: Users },
       { id: "feed", label: "Broadcasts", icon: Bell },
@@ -80,6 +88,8 @@ export default function Dashboard() {
       case "eval-coach": return <CoachEvalForm />;
       case "vpc": return <VPCFlows />;
       case "feed": return <ClassFeed />;
+      case "leaderboard": return <LiveLeaderboard />;
+      case "live-scoring": return <LiveScoring />;
       default: return <DashboardHome />;
     }
   };

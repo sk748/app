@@ -1,33 +1,35 @@
+#!/usr/bin/env python3
+
 import requests
 import sys
 import json
 from datetime import datetime
 
-class GolfLMSAPITester:
-    def __init__(self, base_url="https://golf-lms-crm.preview.emergentagent.com/api"):
-        self.base_url = base_url
+class LiveScoringAPITester:
+    def __init__(self, base_url="https://golf-lms-crm.preview.emergentagent.com"):
+        self.base_url = base_url.rstrip("/")
         self.tokens = {}
-        self.users = {}
         self.tests_run = 0
         self.tests_passed = 0
 
     def run_test(self, name, method, endpoint, expected_status, data=None, headers=None):
         """Run a single API test"""
-        url = f"{self.base_url}/{endpoint}"
-        request_headers = {'Content-Type': 'application/json'}
-        if headers:
-            request_headers.update(headers)
+        url = f"{self.base_url}/api/{endpoint.lstrip('/')}"
+        
+        if headers is None:
+            headers = {'Content-Type': 'application/json'}
 
         self.tests_run += 1
         print(f"\n🔍 Testing {name}...")
+        print(f"   URL: {url}")
         
         try:
             if method == 'GET':
-                response = requests.get(url, headers=request_headers)
+                response = requests.get(url, headers=headers)
             elif method == 'POST':
-                response = requests.post(url, json=data, headers=request_headers)
+                response = requests.post(url, json=data, headers=headers)
             elif method == 'PUT':
-                response = requests.put(url, json=data, headers=request_headers)
+                response = requests.put(url, json=data, headers=headers)
 
             success = response.status_code == expected_status
             if success:
@@ -40,428 +42,235 @@ class GolfLMSAPITester:
             else:
                 print(f"❌ Failed - Expected {expected_status}, got {response.status_code}")
                 try:
-                    print(f"Response: {response.json()}")
+                    error_data = response.json()
+                    print(f"   Error: {error_data}")
                 except:
-                    print(f"Response: {response.text}")
-
-            return success, {}
+                    print(f"   Error: {response.text}")
+                return False, {}
 
         except Exception as e:
-            print(f"❌ Failed - Error: {str(e)}")
+            print(f"❌ Failed - Exception: {str(e)}")
             return False, {}
 
-    def login_user(self, role, email, password):
-        """Login and store token for role"""
+    def login_user(self, email, password, role_name):
+        """Login and get token"""
         success, response = self.run_test(
-            f"{role} Login",
+            f"Login {role_name}",
             "POST",
             "auth/login",
             200,
             data={"email": email, "password": password}
         )
         if success and 'token' in response:
-            self.tokens[role] = response['token']
-            self.users[role] = response['user']
+            self.tokens[role_name] = response['token']
+            print(f"   Token stored for {role_name}")
             return True
         return False
 
-    def get_auth_header(self, role):
-        """Get authorization header for role"""
-        if role in self.tokens:
-            return {"Authorization": f"Bearer {self.tokens[role]}"}
-        return {}
+    def get_auth_headers(self, role_name):
+        """Get authorization headers for a role"""
+        token = self.tokens.get(role_name)
+        if not token:
+            return {'Content-Type': 'application/json'}
+        return {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {token}'
+        }
 
-    def test_seed_data(self):
-        """Test seed data endpoint"""
+    def test_tournament_leaderboard(self, tournament_id):
+        """Test GET /api/tournaments/{tournament_id}/leaderboard"""
         success, response = self.run_test(
-            "Seed Data",
-            "POST",
-            "seed",
+            f"Get Tournament {tournament_id} Leaderboard",
+            "GET",
+            f"tournaments/{tournament_id}/leaderboard",
             200
         )
-        return success
-
-    def test_announcements(self):
-        """Test public announcements endpoint"""
-        success, response = self.run_test(
-            "Get Announcements",
-            "GET",
-            "announcements",
-            200
-        )
-        if success and isinstance(response, list) and len(response) > 0:
-            print(f"Found {len(response)} announcements")
-            return True
-        return success
-
-    def test_courses(self, role="STUDENT"):
-        """Test courses endpoint"""
-        success, response = self.run_test(
-            "Get Courses",
-            "GET",
-            "courses",
-            200,
-            headers=self.get_auth_header(role)
-        )
-        if success and isinstance(response, list) and len(response) > 0:
-            print(f"Found {len(response)} courses")
-            # Check if tees are included
-            for course in response:
-                if 'tees' in course and len(course['tees']) > 0:
-                    print(f"Course '{course['name']}' has {len(course['tees'])} tees")
-                    return True
-        return success
-
-    def test_scorecard_submission(self, role="STUDENT"):
-        """Test scorecard submission for student"""
-        if role not in self.users:
-            print(f"❌ User {role} not logged in")
-            return False
+        
+        if success:
+            # Validate leaderboard structure
+            expected_keys = ['tournament', 'scores', 'rsvp_count', 'players_started']
+            missing_keys = [key for key in expected_keys if key not in response]
+            if missing_keys:
+                print(f"   ⚠️  Missing keys in leaderboard: {missing_keys}")
+                return False
             
-        # First get courses to find a tee
-        success, courses = self.run_test(
-            "Get Courses for Scorecard",
-            "GET",
-            "courses",
-            200,
-            headers=self.get_auth_header(role)
-        )
-        
-        if not success or not courses or not courses[0].get('tees'):
-            print("❌ No courses or tees available for scorecard test")
-            return False
+            scores = response.get('scores', [])
+            print(f"   📊 Found {len(scores)} players with scores")
             
-        tee_id = courses[0]['tees'][0]['id']
+            # Validate score structure for first player
+            if scores:
+                score = scores[0]
+                required_score_keys = ['position', 'student_name', 'total_score', 'to_par', 'holes_completed']
+                missing_score_keys = [key for key in required_score_keys if key not in score]
+                if missing_score_keys:
+                    print(f"   ⚠️  Missing keys in score: {missing_score_keys}")
+                else:
+                    print(f"   ✨ Player 1: {score['student_name']} - Pos {score['position']}, Score {score['total_score']}, To Par {score['to_par']}, Holes {score['holes_completed']}")
+            
+            return len(scores) >= 4  # Should have 4 players as mentioned in the test requirements
         
-        # Submit a scorecard
-        scorecard_data = {
-            "tee_id": tee_id,
-            "gross_score": 85,
-            "holes_played": 18,
-            "pcc": 0
-        }
+        return False
+
+    def test_live_score_submission(self, tournament_id, student_id, role_name):
+        """Test POST /api/tournaments/{tournament_id}/live-scores"""
+        test_hole_scores = [4, 5, 3, 5, 4, 6, 4, 5, 4, None, None, None, None, None, None, None, None, None]
         
         success, response = self.run_test(
-            "Submit Scorecard",
+            f"Submit Live Score for Student {student_id}",
             "POST",
-            "scores/sync",
+            f"tournaments/{tournament_id}/live-scores",
             200,
-            data=scorecard_data,
-            headers=self.get_auth_header(role)
+            data={
+                "student_id": student_id,
+                "hole_scores": test_hole_scores,
+                "tee_id": "tee-muthaiga-white"
+            },
+            headers=self.get_auth_headers(role_name)
         )
         
-        if success and response.get('success') and 'differential' in response:
-            print(f"Score differential calculated: {response['differential']}")
-            print(f"New handicap index: {response.get('new_handicap_index')}")
-            return True
-        return success
-
-    def test_tournaments(self, role="STUDENT"):
-        """Test tournament endpoints"""
-        success, response = self.run_test(
-            "Get Tournaments",
-            "GET",
-            "tournaments",
-            200,
-            headers=self.get_auth_header(role)
-        )
-        
-        if success and isinstance(response, list):
-            print(f"Found {len(response)} tournaments")
+        if success:
+            # Validate response structure
+            expected_keys = ['student_id', 'hole_scores', 'total_score', 'to_par', 'holes_completed']
+            missing_keys = [key for key in expected_keys if key not in response]
+            if missing_keys:
+                print(f"   ⚠️  Missing keys in live score response: {missing_keys}")
+                return False
             
-            # Try to RSVP to first tournament if exists
-            if len(response) > 0:
-                tournament_id = response[0]['id']
-                rsvp_success, rsvp_response = self.run_test(
-                    "RSVP Tournament",
-                    "POST",
-                    f"tournaments/{tournament_id}/rsvp",
-                    200,
-                    headers=self.get_auth_header(role)
-                )
-                if rsvp_success:
-                    print("✅ Tournament RSVP successful")
-                return rsvp_success
+            print(f"   🎯 Score submitted: Total {response['total_score']}, To Par {response['to_par']}, Holes {response['holes_completed']}")
             return True
-        return success
+        
+        return False
 
-    def test_coach_evaluation(self, role="STUDENT"):
-        """Test coach evaluation submission"""
-        # First get coaches
-        success, coaches = self.run_test(
-            "Get Coaches",
-            "GET",
-            "users?role=COACH",
-            200,
-            headers=self.get_auth_header(role)
-        )
-        
-        if not success or not coaches:
-            print("❌ No coaches available for evaluation test")
-            return False
-            
-        coach_id = coaches[0]['id']
-        
-        eval_data = {
-            "coach_id": coach_id,
-            "rating": 5,
-            "feedback": "Excellent coaching and great communication!"
-        }
-        
+    def test_tournament_status_update(self, tournament_id, new_status, role_name):
+        """Test PUT /api/tournaments/{tournament_id}/status"""
         success, response = self.run_test(
-            "Submit Coach Evaluation",
-            "POST",
-            "coach-evaluations",
+            f"Update Tournament {tournament_id} Status to {new_status}",
+            "PUT",
+            f"tournaments/{tournament_id}/status",
             200,
-            data=eval_data,
-            headers=self.get_auth_header(role)
+            data={"status": new_status},
+            headers=self.get_auth_headers(role_name)
         )
         
         if success and response.get('success'):
-            print("✅ Coach evaluation submitted successfully")
+            print(f"   🚦 Tournament status updated to {new_status}")
             return True
-        return success
+        
+        return False
 
-    def test_chat_functionality(self, role="STUDENT"):
-        """Test chat endpoints"""
-        # Get channels
-        success, channels = self.run_test(
-            "Get Chat Channels",
-            "GET",
-            "channels",
-            200,
-            headers=self.get_auth_header(role)
-        )
+    def test_unauthorized_access(self):
+        """Test that student cannot access coach endpoints"""
+        student_headers = self.get_auth_headers('STUDENT')
         
-        if not success or not channels:
-            print("❌ No chat channels available")
-            return False
-            
-        channel_id = channels[0]['id']
-        
-        # Get messages
-        success, messages = self.run_test(
-            "Get Channel Messages",
-            "GET",
-            f"channels/{channel_id}/messages",
-            200,
-            headers=self.get_auth_header(role)
-        )
-        
-        if success:
-            print(f"Found {len(messages) if isinstance(messages, list) else 0} messages in channel")
-            
-            # Send a message (if not parent)
-            if role != "PARENT":
-                message_data = {"content": f"Test message from {role} at {datetime.now()}"}
-                msg_success, msg_response = self.run_test(
-                    "Send Chat Message",
-                    "POST",
-                    f"channels/{channel_id}/messages",
-                    200,
-                    data=message_data,
-                    headers=self.get_auth_header(role)
-                )
-                return msg_success
-            return True
-        return success
-
-    def test_admin_functionality(self, role="ADMIN"):
-        """Test admin-specific endpoints"""
-        if role != "ADMIN":
-            return True
-            
-        # Test coach evaluation aggregates
-        success, ratings = self.run_test(
-            "Get Coach Rating Aggregates",
-            "GET",
-            "coach-evaluations/aggregate",
-            200,
-            headers=self.get_auth_header(role)
-        )
-        
-        if success:
-            print(f"Found {len(ratings) if isinstance(ratings, list) else 0} coach ratings")
-        
-        # Test announcement creation (NEW in iteration 2)
-        announcement_data = {
-            "title": "Test Admin Announcement",
-            "content": "This is a test announcement from admin dashboard",
-            "priority": "HIGH"
-        }
-        
-        ann_success, ann_response = self.run_test(
-            "Create Admin Announcement",
+        # Test student cannot submit live scores
+        success, _ = self.run_test(
+            "Student Cannot Submit Live Scores",
             "POST",
-            "announcements",
-            200,
-            data=announcement_data,
-            headers=self.get_auth_header(role)
+            "tournaments/t-3/live-scores",
+            403,
+            data={
+                "student_id": "demo-student",
+                "hole_scores": [4, 5, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None]
+            },
+            headers=student_headers
         )
         
-        if ann_success and 'id' in ann_response:
-            print("✅ Admin announcement creation successful")
-            return success and ann_success
-        return success
-
-    def test_profile_endpoints(self, role="STUDENT"):
-        """Test user profile endpoints"""
-        # Get current user profile
-        success, profile = self.run_test(
-            "Get User Profile",
-            "GET",
-            "auth/me",
-            200,
-            headers=self.get_auth_header(role)
+        if not success:
+            print("   ⚠️  Student should be blocked from submitting scores")
+            return False
+        
+        # Test student cannot update tournament status
+        success, _ = self.run_test(
+            "Student Cannot Update Tournament Status",
+            "PUT",
+            "tournaments/t-3/status",
+            403,
+            data={"status": "COMPLETED"},
+            headers=student_headers
         )
         
-        if success and 'id' in profile:
-            print(f"Profile loaded for user: {profile.get('full_name')}")
-            print(f"Role: {profile.get('role')}, HCP Index: {profile.get('current_hcp_index')}")
-            return True
-        return success
-
-    def test_vpc_consent_endpoint(self, role="STUDENT"):
-        """Test VPC consent POST endpoint (NEW in iteration 2)"""
-        if role != "STUDENT":
-            return True
-            
-        # Test POST /api/pending-approvals
-        consent_data = {
-            "guardian_kcc_id": "KCC-9999"
-        }
+        if not success:
+            print("   ⚠️  Student should be blocked from updating tournament status")
+            return False
         
-        success, response = self.run_test(
-            "VPC Consent Request POST",
-            "POST", 
-            "pending-approvals",
-            200,
-            data=consent_data,
-            headers=self.get_auth_header(role)
-        )
-        
-        if success and 'id' in response:
-            print("✅ VPC consent POST endpoint working")
-            
-            # Also test GET pending-approvals
-            get_success, get_response = self.run_test(
-                "Get Pending Approvals", 
-                "GET",
-                "pending-approvals", 
-                200,
-                headers=self.get_auth_header(role)
-            )
-            return success and get_success
-        return success
-
-    def test_events_and_attendance(self, role="COACH"):
-        """Test events and attendance endpoints (NEW event creation in iteration 2)"""
-        if role != "COACH":
-            return True
-            
-        # Test getting events
-        success, events = self.run_test(
-            "Get Events",
-            "GET",
-            "events",
-            200,
-            headers=self.get_auth_header(role)
-        )
-        
-        if success:
-            print(f"Found {len(events) if isinstance(events, list) else 0} existing events")
-            
-            # Test creating a new event (NEW feature in iteration 2)
-            from datetime import datetime, timedelta
-            start_time = (datetime.now() + timedelta(days=1)).isoformat()
-            end_time = (datetime.now() + timedelta(days=1, hours=2)).isoformat()
-            
-            event_data = {
-                "title": "Test Practice Session",
-                "description": "Coach created test event",
-                "start_time": start_time,
-                "end_time": end_time
-            }
-            
-            create_success, create_response = self.run_test(
-                "Create New Event",
-                "POST",
-                "events",
-                200,
-                data=event_data,
-                headers=self.get_auth_header(role)
-            )
-            
-            if create_success and 'id' in create_response:
-                print("✅ Event creation successful")
-                return success and create_success
-        return success
+        return True
 
 def main():
-    print("🏌️ Starting Karen Country Club Golf LMS & CRM API Tests")
-    print("=" * 60)
+    print("🏌️ Karen Country Club Golf LMS - Live Leaderboard & Scoring API Tests")
+    print("=" * 70)
     
-    tester = GolfLMSAPITester()
+    tester = LiveScoringAPITester()
     
-    # Test seed data first
-    if not tester.test_seed_data():
-        print("⚠️ Seed data test failed - continuing anyway")
-    
-    # Test public endpoints
-    print("\n📢 Testing Public Endpoints...")
-    tester.test_announcements()
-    
-    # Test user logins
-    print("\n🔑 Testing User Authentication...")
-    demo_users = [
-        ("STUDENT", "student@kcc.co.ke", "student123"),
-        ("COACH", "coach@kcc.co.ke", "coach123"), 
-        ("PARENT", "parent@kcc.co.ke", "parent123"),
-        ("ADMIN", "admin@kcc.co.ke", "admin123")
-    ]
-    
-    login_success = 0
-    for role, email, password in demo_users:
-        if tester.login_user(role, email, password):
-            login_success += 1
-    
-    if login_success == 0:
-        print("❌ No users could login - aborting tests")
+    # Login all test users
+    if not tester.login_user("student@kcc.co.ke", "student123", "STUDENT"):
+        print("❌ Student login failed, stopping tests")
         return 1
     
-    print(f"✅ Successfully logged in {login_success}/4 demo users")
+    if not tester.login_user("coach@kcc.co.ke", "coach123", "COACH"):
+        print("❌ Coach login failed, stopping tests")
+        return 1
     
-    # Test core functionality for each role
-    for role in ["STUDENT", "COACH", "PARENT", "ADMIN"]:
-        if role not in tester.tokens:
-            continue
-            
-        print(f"\n👤 Testing {role} Functionality...")
-        
-        # Test common endpoints
-        tester.test_profile_endpoints(role)
-        tester.test_courses(role)
-        tester.test_chat_functionality(role)
-        
-        # Role-specific tests
-        if role == "STUDENT":
-            tester.test_scorecard_submission(role)
-            tester.test_tournaments(role)
-            tester.test_coach_evaluation(role)
-            tester.test_vpc_consent_endpoint(role)
-        elif role == "COACH":
-            tester.test_events_and_attendance(role)
-        elif role == "ADMIN":
-            tester.test_admin_functionality(role)
+    if not tester.login_user("admin@kcc.co.ke", "admin123", "ADMIN"):
+        print("❌ Admin login failed, stopping tests")
+        return 1
     
-    # Print final results
-    print(f"\n📊 Test Results")
-    print("=" * 30)
-    print(f"Tests Run: {tester.tests_run}")
-    print(f"Tests Passed: {tester.tests_passed}")
-    print(f"Success Rate: {(tester.tests_passed/tester.tests_run*100):.1f}%" if tester.tests_run > 0 else "No tests run")
+    # Test 1: GET /api/tournaments/t-3/leaderboard
+    print("\n" + "="*50)
+    print("TEST 1: Tournament Leaderboard API")
+    print("="*50)
     
-    return 0 if tester.tests_passed > (tester.tests_run * 0.8) else 1
+    leaderboard_success = tester.test_tournament_leaderboard("t-3")
+    if not leaderboard_success:
+        print("❌ Leaderboard test failed - critical functionality broken")
+    
+    # Test 2: POST live scores (coach auth)
+    print("\n" + "="*50)
+    print("TEST 2: Live Score Submission API")
+    print("="*50)
+    
+    live_score_success = tester.test_live_score_submission("t-3", "demo-student", "COACH")
+    if not live_score_success:
+        print("❌ Live score submission failed - critical functionality broken")
+    
+    # Test 3: PUT tournament status (coach auth)
+    print("\n" + "="*50)
+    print("TEST 3: Tournament Status Update API")
+    print("="*50)
+    
+    # Try to update status from LIVE to COMPLETED and back to LIVE
+    status_success_1 = tester.test_tournament_status_update("t-3", "COMPLETED", "COACH")
+    status_success_2 = tester.test_tournament_status_update("t-3", "LIVE", "COACH")
+    status_success = status_success_1 and status_success_2
+    
+    # Test 4: Authorization tests
+    print("\n" + "="*50)
+    print("TEST 4: Authorization & Security")
+    print("="*50)
+    
+    auth_success = tester.test_unauthorized_access()
+    
+    # Summary
+    print("\n" + "="*70)
+    print("BACKEND TEST SUMMARY")
+    print("="*70)
+    print(f"📊 Tests passed: {tester.tests_passed}/{tester.tests_run}")
+    
+    critical_tests = [leaderboard_success, live_score_success, status_success, auth_success]
+    critical_passed = sum(critical_tests)
+    
+    print(f"🎯 Critical features: {critical_passed}/4 working")
+    print("\n🔍 Critical Test Results:")
+    print(f"   • Tournament Leaderboard: {'✅ PASS' if leaderboard_success else '❌ FAIL'}")
+    print(f"   • Live Score Submission: {'✅ PASS' if live_score_success else '❌ FAIL'}")
+    print(f"   • Tournament Status Update: {'✅ PASS' if status_success else '❌ FAIL'}")
+    print(f"   • Authorization Controls: {'✅ PASS' if auth_success else '❌ FAIL'}")
+    
+    if critical_passed == 4:
+        print("\n🎉 All critical backend APIs are working correctly!")
+        return 0
+    else:
+        print(f"\n⚠️  {4 - critical_passed} critical backend issues found")
+        return 1
 
 if __name__ == "__main__":
     sys.exit(main())

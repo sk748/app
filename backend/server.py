@@ -633,10 +633,144 @@ async def rsvp_tournament(tournament_id: str, user=Depends(get_current_user)):
     return {"success": True}
 
 
+class LiveScoreInput(BaseModel):
+    student_id: str
+    hole_scores: List[Optional[int]]  # Array of 18, None for unplayed
+    tee_id: Optional[str] = None
+
+class TournamentStatusInput(BaseModel):
+    status: str  # UPCOMING, LIVE, COMPLETED
+    tee_id: Optional[str] = None
+
+
 @api_router.get("/tournaments/{tournament_id}/rsvps")
 async def get_tournament_rsvps(tournament_id: str, user=Depends(get_current_user)):
     rsvps = await db.tournament_rsvps.find({"tournament_id": tournament_id}, {"_id": 0}).to_list(200)
     return rsvps
+
+
+@api_router.put("/tournaments/{tournament_id}/status")
+async def update_tournament_status(tournament_id: str, data: TournamentStatusInput, user=Depends(get_current_user)):
+    if user["role"] not in ("COACH", "ADMIN"):
+        raise HTTPException(status_code=403, detail="Only coaches/admins can update tournament status")
+    tournament = await db.tournaments.find_one({"id": tournament_id}, {"_id": 0})
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    updates = {"status": data.status}
+    if data.tee_id:
+        updates["tee_id"] = data.tee_id
+    await db.tournaments.update_one({"id": tournament_id}, {"$set": updates})
+    return {"success": True}
+
+
+@api_router.post("/tournaments/{tournament_id}/live-scores")
+async def submit_live_score(tournament_id: str, data: LiveScoreInput, user=Depends(get_current_user)):
+    if user["role"] not in ("COACH", "ADMIN"):
+        raise HTTPException(status_code=403, detail="Only coaches/admins can input scores")
+
+    tournament = await db.tournaments.find_one({"id": tournament_id}, {"_id": 0})
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    student = await db.users.find_one({"id": data.student_id}, {"_id": 0})
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    tee_id = data.tee_id or tournament.get("tee_id", "tee-karen-white")
+    tee = await db.tees.find_one({"id": tee_id}, {"_id": 0})
+
+    # Pad holes to 18
+    holes = (data.hole_scores + [None] * 18)[:18]
+    played = [h for h in holes if h is not None]
+    holes_completed = len(played)
+    total_score = sum(played) if played else 0
+
+    par = tee["par"] if tee else 72
+    par_per_hole = par / 18
+    to_par = round(total_score - (par_per_hole * holes_completed)) if holes_completed > 0 else 0
+
+    # Calculate live differential if enough holes
+    differential = None
+    if holes_completed >= 9 and tee:
+        differential = calculate_score_differential(
+            actual_gross_score=total_score,
+            holes_played=holes_completed,
+            handicap_index=student.get("current_hcp_index", 54.0),
+            course_rating=tee["course_rating"],
+            slope_rating=tee["slope_rating"],
+            pcc=0,
+        )
+
+    score_doc = {
+        "tournament_id": tournament_id,
+        "student_id": data.student_id,
+        "student_name": student["full_name"],
+        "tee_id": tee_id,
+        "hole_scores": holes,
+        "holes_completed": holes_completed,
+        "total_score": total_score,
+        "to_par": to_par,
+        "score_differential": differential,
+        "handicap_index": student.get("current_hcp_index", 54.0),
+        "entered_by": user["id"],
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    existing = await db.live_scores.find_one(
+        {"tournament_id": tournament_id, "student_id": data.student_id}, {"_id": 0}
+    )
+    if existing:
+        await db.live_scores.update_one(
+            {"tournament_id": tournament_id, "student_id": data.student_id},
+            {"$set": score_doc}
+        )
+        score_doc["id"] = existing.get("id", str(uuid.uuid4()))
+    else:
+        score_doc["id"] = str(uuid.uuid4())
+        score_doc["created_at"] = datetime.now(timezone.utc).isoformat()
+        await db.live_scores.insert_one(score_doc)
+
+    safe = {k: v for k, v in score_doc.items() if k != "_id"}
+    return safe
+
+
+@api_router.get("/tournaments/{tournament_id}/leaderboard")
+async def get_leaderboard(tournament_id: str):
+    scores = await db.live_scores.find(
+        {"tournament_id": tournament_id}, {"_id": 0}
+    ).to_list(200)
+
+    tournament = await db.tournaments.find_one({"id": tournament_id}, {"_id": 0})
+    tee_id = tournament.get("tee_id", "tee-karen-white") if tournament else "tee-karen-white"
+    tee = await db.tees.find_one({"id": tee_id}, {"_id": 0})
+    par = tee["par"] if tee else 72
+
+    # Sort: most holes completed first, then lowest to_par
+    scores.sort(key=lambda s: (-s.get("holes_completed", 0), s.get("to_par", 999)))
+
+    # Assign positions
+    for i, s in enumerate(scores):
+        s["position"] = i + 1
+        s["par"] = par
+        s["tee_color"] = tee.get("color", "") if tee else ""
+        s["course_name"] = tee.get("course_name", "") if tee else ""
+
+    rsvps = await db.tournament_rsvps.find({"tournament_id": tournament_id}, {"_id": 0}).to_list(200)
+
+    return {
+        "tournament": tournament,
+        "scores": scores,
+        "rsvp_count": len(rsvps),
+        "players_started": len(scores),
+    }
+
+
+@api_router.get("/tournaments/{tournament_id}/live-scores")
+async def get_live_scores(tournament_id: str, user=Depends(get_current_user)):
+    scores = await db.live_scores.find(
+        {"tournament_id": tournament_id}, {"_id": 0}
+    ).to_list(200)
+    return scores
 
 # ---------- SEED DATA ----------
 
@@ -674,9 +808,9 @@ async def seed_data():
 
     # Tournaments
     tournaments = [
-        {"id": "t-1", "title": "KGU Junior Strokeplay Championship", "date": "2026-04-12", "req_hcp": 20.0, "req_level": 3, "type": "Open", "location": "Karen Country Club"},
-        {"id": "t-2", "title": "Elite Invitational (Karen CC)", "date": "2026-05-05", "req_hcp": 9.9, "req_level": 6, "type": "Elite", "location": "Karen Country Club"},
-        {"id": "t-3", "title": "Junior Development Cup", "date": "2026-06-20", "req_hcp": 36.0, "req_level": 1, "type": "Open", "location": "Muthaiga Golf Club"},
+        {"id": "t-1", "title": "KGU Junior Strokeplay Championship", "date": "2026-04-12", "req_hcp": 20.0, "req_level": 3, "type": "Open", "location": "Karen Country Club", "tee_id": "tee-karen-white", "status": "UPCOMING"},
+        {"id": "t-2", "title": "Elite Invitational (Karen CC)", "date": "2026-05-05", "req_hcp": 9.9, "req_level": 6, "type": "Elite", "location": "Karen Country Club", "tee_id": "tee-karen-blue", "status": "UPCOMING"},
+        {"id": "t-3", "title": "Junior Development Cup", "date": "2026-06-20", "req_hcp": 36.0, "req_level": 1, "type": "Open", "location": "Muthaiga Golf Club", "tee_id": "tee-muthaiga-white", "status": "LIVE"},
     ]
     await db.tournaments.insert_many(tournaments)
 
@@ -740,6 +874,26 @@ async def seed_data():
     ]
     for s in extra_students:
         await db.users.update_one({"id": s["id"]}, {"$set": s}, upsert=True)
+
+    # Demo live scores for the LIVE tournament (t-3)
+    live_scores = [
+        {"id": "ls-1", "tournament_id": "t-3", "student_id": "demo-student", "student_name": "John Ochieng", "tee_id": "tee-muthaiga-white", "hole_scores": [4,5,3,5,4,6,4,5,4,5,4,None,None,None,None,None,None,None], "holes_completed": 11, "total_score": 49, "to_par": 5, "score_differential": None, "handicap_index": 18.5, "entered_by": "demo-coach", "created_at": datetime.now(timezone.utc).isoformat(), "updated_at": datetime.now(timezone.utc).isoformat()},
+        {"id": "ls-2", "tournament_id": "t-3", "student_id": "demo-student-2", "student_name": "Michael Wainaina", "tee_id": "tee-muthaiga-white", "hole_scores": [5,4,4,6,5,5,5,6,5,4,5,5,None,None,None,None,None,None], "holes_completed": 12, "total_score": 59, "to_par": 11, "score_differential": None, "handicap_index": 22.1, "entered_by": "demo-coach", "created_at": datetime.now(timezone.utc).isoformat(), "updated_at": datetime.now(timezone.utc).isoformat()},
+        {"id": "ls-3", "tournament_id": "t-3", "student_id": "demo-student-3", "student_name": "Sarah Wanjiku", "tee_id": "tee-muthaiga-white", "hole_scores": [5,6,4,5,5,6,5,5,5,None,None,None,None,None,None,None,None,None], "holes_completed": 9, "total_score": 46, "to_par": 10, "score_differential": 15.9, "handicap_index": 28.4, "entered_by": "demo-coach", "created_at": datetime.now(timezone.utc).isoformat(), "updated_at": datetime.now(timezone.utc).isoformat()},
+        {"id": "ls-4", "tournament_id": "t-3", "student_id": "demo-student-4", "student_name": "Peter Kamau", "tee_id": "tee-muthaiga-white", "hole_scores": [4,4,3,4,5,5,4,4,3,4,4,5,4,None,None,None,None,None], "holes_completed": 13, "total_score": 53, "to_par": 1, "score_differential": None, "handicap_index": 14.8, "entered_by": "demo-coach", "created_at": datetime.now(timezone.utc).isoformat(), "updated_at": datetime.now(timezone.utc).isoformat()},
+    ]
+    for ls in live_scores:
+        await db.live_scores.update_one({"id": ls["id"]}, {"$set": ls}, upsert=True)
+
+    # RSVPs for t-3
+    demo_rsvps = [
+        {"id": str(uuid.uuid4()), "tournament_id": "t-3", "student_id": "demo-student", "student_name": "John Ochieng", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "tournament_id": "t-3", "student_id": "demo-student-2", "student_name": "Michael Wainaina", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "tournament_id": "t-3", "student_id": "demo-student-3", "student_name": "Sarah Wanjiku", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "tournament_id": "t-3", "student_id": "demo-student-4", "student_name": "Peter Kamau", "created_at": datetime.now(timezone.utc).isoformat()},
+    ]
+    for r in demo_rsvps:
+        await db.tournament_rsvps.update_one({"tournament_id": r["tournament_id"], "student_id": r["student_id"]}, {"$set": r}, upsert=True)
 
     return {"message": "Seed data created successfully"}
 
