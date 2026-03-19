@@ -22,7 +22,7 @@ export function useApi() {
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="min-h-screen bg-navy flex items-center justify-center"><div className="text-azure text-lg">Loading...</div></div>;
-  if (!user) return <Navigate to="/auth" replace />;
+  if (!user) return <Navigate to="/" replace />;
   return children;
 }
 
