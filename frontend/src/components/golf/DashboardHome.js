@@ -51,7 +51,7 @@ export default function DashboardHome() {
 
       {/* Stats Row */}
       {(role === "STUDENT" || role === "COACH") && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 animate-fade-in-up stagger-1">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 animate-fade-in-up stagger-1">
           <StatCard icon={TrendingDown} label="Handicap Index" value={user?.current_hcp_index?.toFixed(1) || "54.0"} color="azure" />
           <StatCard icon={Trophy} label="Level" value={`${user?.evaluation_level || 0} / 8`} color="gold" />
           <StatCard icon={Target} label="Rounds Played" value={scorecards.length} color="azure" />

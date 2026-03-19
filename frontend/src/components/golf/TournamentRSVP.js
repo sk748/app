@@ -32,15 +32,15 @@ export default function TournamentRSVP() {
           const isAttending = rsvpStatus[t.id];
 
           return (
-            <div key={t.id} data-testid={`tournament-${t.id}`} className="glass-light rounded-2xl p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 hover:border-azure/20 transition-all">
-              <div>
-                <div className="flex items-center gap-3 mb-1">
+            <div key={t.id} data-testid={`tournament-${t.id}`} className="glass-light rounded-2xl p-4 sm:p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-3 sm:gap-4 hover:border-azure/20 transition-all">
+              <div className="min-w-0 w-full md:w-auto">
+                <div className="flex items-center gap-2 sm:gap-3 mb-1 flex-wrap">
                   <span className={`text-[10px] font-bold tracking-widest uppercase px-2 py-1 rounded ${t.type === "Elite" ? "bg-gold/15 text-gold" : "bg-azure/15 text-azure"}`}>
                     {t.type}
                   </span>
-                  <p className="text-slate text-sm">{t.date}</p>
+                  <p className="text-slate text-xs sm:text-sm">{t.date}</p>
                 </div>
-                <h3 className="text-xl font-bold text-silver">{t.title}</h3>
+                <h3 className="text-base sm:text-xl font-bold text-silver">{t.title}</h3>
                 <p className="text-xs text-slate mt-1">{t.location}</p>
                 {!isEligible && (
                   <p className="text-red-400 text-xs mt-2 font-medium flex items-center gap-1">

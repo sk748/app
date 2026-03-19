@@ -380,6 +380,34 @@ async def get_pending_approvals(user=Depends(get_current_user)):
     return approvals
 
 
+class PendingApprovalCreate(BaseModel):
+    guardian_kcc_id: str
+
+
+@api_router.post("/pending-approvals")
+async def create_pending_approval(data: PendingApprovalCreate, user=Depends(get_current_user)):
+    if user["role"] != "STUDENT":
+        raise HTTPException(status_code=403, detail="Only students can create consent requests")
+
+    existing = await db.pending_approvals.find_one(
+        {"student_id": user["id"], "guardian_kcc_id": data.guardian_kcc_id.upper(), "status": "PENDING"}, {"_id": 0}
+    )
+    if existing:
+        raise HTTPException(status_code=400, detail="A pending request already exists for this guardian")
+
+    approval = {
+        "id": str(uuid.uuid4()),
+        "student_id": user["id"],
+        "student_name": user["full_name"],
+        "guardian_kcc_id": data.guardian_kcc_id.upper(),
+        "status": "PENDING",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.pending_approvals.insert_one(approval)
+    safe = {k: v for k, v in approval.items() if k != "_id"}
+    return safe
+
+
 @api_router.put("/pending-approvals/{approval_id}")
 async def action_approval(approval_id: str, data: ApprovalAction, user=Depends(get_current_user)):
     if user["role"] not in ("PARENT", "ADMIN"):
@@ -659,6 +687,15 @@ async def seed_data():
         {"id": "ann-3", "title": "Congratulations to our Inter-Club Team!", "content": "Our elite squad placed 2nd at the Kenya Junior Golf Championship. Well done to all players!", "priority": "NORMAL", "author_name": "Coach David", "author_role": "COACH", "created_at": (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()},
     ]
     await db.announcements.insert_many(announcements)
+
+    # Events for attendance
+    events = [
+        {"id": "evt-1", "title": "Saturday Morning Practice", "description": "Regular weekend practice session", "start_time": (datetime.now(timezone.utc) + timedelta(days=2)).isoformat(), "end_time": (datetime.now(timezone.utc) + timedelta(days=2, hours=2)).isoformat(), "academy_id": "acad-karen", "created_by": "demo-coach", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": "evt-2", "title": "Short Game Clinic", "description": "Focus on chipping and putting", "start_time": (datetime.now(timezone.utc) + timedelta(days=5)).isoformat(), "end_time": (datetime.now(timezone.utc) + timedelta(days=5, hours=1, minutes=30)).isoformat(), "academy_id": "acad-karen", "created_by": "demo-coach", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": "evt-3", "title": "Pre-Tournament Prep", "description": "Course strategy and mental game", "start_time": (datetime.now(timezone.utc) + timedelta(days=10)).isoformat(), "end_time": (datetime.now(timezone.utc) + timedelta(days=10, hours=3)).isoformat(), "academy_id": "acad-karen", "created_by": "demo-coach", "created_at": datetime.now(timezone.utc).isoformat()},
+    ]
+    for evt in events:
+        await db.events.update_one({"id": evt["id"]}, {"$set": evt}, upsert=True)
 
     # Demo users
     demo_users = [

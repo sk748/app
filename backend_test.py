@@ -282,7 +282,26 @@ class GolfLMSAPITester:
         
         if success:
             print(f"Found {len(ratings) if isinstance(ratings, list) else 0} coach ratings")
-            return True
+        
+        # Test announcement creation (NEW in iteration 2)
+        announcement_data = {
+            "title": "Test Admin Announcement",
+            "content": "This is a test announcement from admin dashboard",
+            "priority": "HIGH"
+        }
+        
+        ann_success, ann_response = self.run_test(
+            "Create Admin Announcement",
+            "POST",
+            "announcements",
+            200,
+            data=announcement_data,
+            headers=self.get_auth_header(role)
+        )
+        
+        if ann_success and 'id' in ann_response:
+            print("✅ Admin announcement creation successful")
+            return success and ann_success
         return success
 
     def test_profile_endpoints(self, role="STUDENT"):
@@ -300,6 +319,82 @@ class GolfLMSAPITester:
             print(f"Profile loaded for user: {profile.get('full_name')}")
             print(f"Role: {profile.get('role')}, HCP Index: {profile.get('current_hcp_index')}")
             return True
+        return success
+
+    def test_vpc_consent_endpoint(self, role="STUDENT"):
+        """Test VPC consent POST endpoint (NEW in iteration 2)"""
+        if role != "STUDENT":
+            return True
+            
+        # Test POST /api/pending-approvals
+        consent_data = {
+            "guardian_kcc_id": "KCC-9999"
+        }
+        
+        success, response = self.run_test(
+            "VPC Consent Request POST",
+            "POST", 
+            "pending-approvals",
+            200,
+            data=consent_data,
+            headers=self.get_auth_header(role)
+        )
+        
+        if success and 'id' in response:
+            print("✅ VPC consent POST endpoint working")
+            
+            # Also test GET pending-approvals
+            get_success, get_response = self.run_test(
+                "Get Pending Approvals", 
+                "GET",
+                "pending-approvals", 
+                200,
+                headers=self.get_auth_header(role)
+            )
+            return success and get_success
+        return success
+
+    def test_events_and_attendance(self, role="COACH"):
+        """Test events and attendance endpoints (NEW event creation in iteration 2)"""
+        if role != "COACH":
+            return True
+            
+        # Test getting events
+        success, events = self.run_test(
+            "Get Events",
+            "GET",
+            "events",
+            200,
+            headers=self.get_auth_header(role)
+        )
+        
+        if success:
+            print(f"Found {len(events) if isinstance(events, list) else 0} existing events")
+            
+            # Test creating a new event (NEW feature in iteration 2)
+            from datetime import datetime, timedelta
+            start_time = (datetime.now() + timedelta(days=1)).isoformat()
+            end_time = (datetime.now() + timedelta(days=1, hours=2)).isoformat()
+            
+            event_data = {
+                "title": "Test Practice Session",
+                "description": "Coach created test event",
+                "start_time": start_time,
+                "end_time": end_time
+            }
+            
+            create_success, create_response = self.run_test(
+                "Create New Event",
+                "POST",
+                "events",
+                200,
+                data=event_data,
+                headers=self.get_auth_header(role)
+            )
+            
+            if create_success and 'id' in create_response:
+                print("✅ Event creation successful")
+                return success and create_success
         return success
 
 def main():
@@ -353,6 +448,9 @@ def main():
             tester.test_scorecard_submission(role)
             tester.test_tournaments(role)
             tester.test_coach_evaluation(role)
+            tester.test_vpc_consent_endpoint(role)
+        elif role == "COACH":
+            tester.test_events_and_attendance(role)
         elif role == "ADMIN":
             tester.test_admin_functionality(role)
     

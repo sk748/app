@@ -144,7 +144,7 @@ export default function Dashboard() {
       {/* Main */}
       <main className="flex-1 lg:ml-64 min-h-screen">
         {/* Top Bar */}
-        <div className="sticky top-0 z-30 bg-navy/90 backdrop-blur-md border-b border-white/5 px-6 py-4 flex items-center justify-between">
+        <div className="sticky top-0 z-30 bg-navy/90 backdrop-blur-md border-b border-white/5 px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <button data-testid="mobile-menu-btn" className="lg:hidden text-slate hover:text-silver" onClick={() => setSidebarOpen(true)}>
               <Menu size={24} />
@@ -163,7 +163,7 @@ export default function Dashboard() {
         </div>
 
         {/* Content */}
-        <div className="p-6 animate-fade-in">
+        <div className="p-3 sm:p-6 animate-fade-in">
           {renderContent()}
         </div>
       </main>
