@@ -26,7 +26,7 @@ export default function Dashboard() {
   const [activeTab, setActiveTab] = useState("home");
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const handleLogout = () => { logout(); navigate("/"); };
+  const handleLogout = () => { logout(); navigate("/", { replace: true }); };
 
   const role = user?.role || "STUDENT";
 
